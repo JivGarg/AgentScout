@@ -6,6 +6,8 @@ Uses Crawl4AI as the primary scraper with httpx as fallback.
 import httpx
 from typing import Optional
 
+from app.core.url_safety import is_safe_http_url
+
 
 async def scrape_url_with_crawl4ai(url: str) -> Optional[str]:
     """
@@ -54,8 +56,27 @@ async def scrape_url_with_httpx(url: str) -> Optional[str]:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            response = await client.get(str(url), headers=headers)
+        async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
+            # Follow redirects manually so every hop is re-validated against
+            # the SSRF host checks (an attacker-controlled site could
+            # otherwise redirect a validated public URL to an internal one).
+            current_url = str(url)
+            response = None
+            for _ in range(5):
+                if not is_safe_http_url(current_url):
+                    print(f"[scraper] redirect target is unsafe: {current_url}")
+                    return None
+                response = await client.get(current_url, headers=headers)
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        break
+                    current_url = str(httpx.URL(current_url).join(location))
+                    continue
+                break
+
+            if response is None:
+                return None
 
             # Accept any response that has HTML body (some sites return non-standard codes)
             if response.status_code >= 400:
@@ -95,6 +116,13 @@ async def scrape_url(url: str) -> str:
     Raises:
         ValueError: If scraping fails with all methods.
     """
+    # Reject internal/private/loopback targets before making any request (SSRF guard).
+    if not is_safe_http_url(url):
+        raise ValueError(
+            "This URL points to a host that cannot be accessed. "
+            "Please provide a public company website."
+        )
+
     # Early check for known-blocked domains
     if _is_blocked_domain(url):
         raise ValueError(

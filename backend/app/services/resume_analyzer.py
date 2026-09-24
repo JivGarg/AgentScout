@@ -9,14 +9,29 @@ Evaluates a student/professional resume against the criteria outlined in cvStruc
   - White-space / readability signals (detected through structural clues in text)
 """
 
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.core.guardrails import (
+    ANTI_INJECTION_CLAUSE,
+    clamp_list_of_strings,
+    clamp_string,
+    looks_like_injection,
+    sanitize_untrusted_text,
+    wrap_untrusted,
+)
 
 settings = get_settings()
+
+MAX_RESUME_CHARS = 15_000
+VALID_GRADES = {"A", "B", "C", "D", "F"}
+
+
+class LLMNotConfiguredError(RuntimeError):
+    """Raised when no LLM API key is configured — a deployment issue, not a transient failure."""
 
 
 # ── Pydantic model for structured AI output ───────────────────
@@ -83,15 +98,16 @@ Return ONLY valid JSON with no markdown, no explanation outside the JSON.
 Keys: overall_score (int 0-100), grade (A/B/C/D/F), summary (string),
 section_scores (array of objects with section/score/feedback/suggestions),
 red_flags (array of strings), strong_points (array of strings),
-rewritten_bullets (array of up to 3 strings using XYZ formula from weak bullets you found)""",
+rewritten_bullets (array of up to 3 strings using XYZ formula from weak bullets you found)
+
+"""
+            + ANTI_INJECTION_CLAUSE,
         ),
         (
             "human",
             """Evaluate this resume:
 
----
 {resume_text}
----
 
 Return JSON only.""",
         ),
@@ -101,29 +117,66 @@ Return JSON only.""",
 
 # ── Main Function ─────────────────────────────────────────────
 
-def _get_llm() -> ChatOpenAI:
-    """
-    Returns the LLM instance.
-    Uses local Ollama by default; falls back to OpenAI if OPENAI_API_KEY is set.
-    """
-    openai_key = (settings.OPENAI_API_KEY or "").strip()
-    use_openai = openai_key and not openai_key.startswith("sk-your-")
+def _get_llm():
+    """Returns the Gemini Flash LLM instance."""
+    gemini_key = (settings.GEMINI_API_KEY or "").strip()
+    if not gemini_key:
+        raise LLMNotConfiguredError("No LLM configured: set GEMINI_API_KEY in .env")
 
-    if use_openai:
-        print("[resume_analyzer] Using OpenAI")
-        return ChatOpenAI(
-            model="gpt-4o-mini",
-            temperature=0.3,
-            api_key=openai_key,
-        )
-
-    print(f"[resume_analyzer] Using Ollama ({settings.OLLAMA_MODEL}) at {settings.OLLAMA_BASE_URL}")
-    return ChatOpenAI(
-        model=settings.OLLAMA_MODEL,
+    print(f"[resume_analyzer] Using Gemini ({settings.GEMINI_MODEL})")
+    return ChatGoogleGenerativeAI(
+        model=settings.GEMINI_MODEL,
         temperature=0.3,
-        api_key="ollama",
-        base_url=f"{settings.OLLAMA_BASE_URL}/v1",
+        google_api_key=gemini_key,
     )
+
+
+def _clamp_section_scores(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value[:10]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            score = int(item.get("score", 0))
+        except (TypeError, ValueError):
+            score = 0
+        score = max(0, min(100, score))
+        out.append(
+            {
+                "section": clamp_string(item.get("section"), 100, "Section"),
+                "score": score,
+                "feedback": clamp_string(item.get("feedback"), 500),
+                "suggestions": clamp_list_of_strings(item.get("suggestions"), 3, 300),
+            }
+        )
+    return out
+
+
+def _clamp_result(result: dict) -> dict:
+    """Enforce hard size/shape/range limits on the model's output."""
+    if not isinstance(result, dict):
+        result = {}
+
+    try:
+        overall_score = max(0, min(100, int(result.get("overall_score", 0))))
+    except (TypeError, ValueError):
+        overall_score = 0
+
+    grade = clamp_string(result.get("grade"), 1).upper()
+    if grade not in VALID_GRADES:
+        grade = "F"
+
+    return {
+        "overall_score": overall_score,
+        "grade": grade,
+        "summary": clamp_string(result.get("summary"), 1000),
+        "section_scores": _clamp_section_scores(result.get("section_scores")),
+        "red_flags": clamp_list_of_strings(result.get("red_flags"), 20, 300),
+        "strong_points": clamp_list_of_strings(result.get("strong_points"), 10, 300),
+        "rewritten_bullets": clamp_list_of_strings(result.get("rewritten_bullets"), 3, 500),
+    }
 
 
 async def analyze_resume(resume_text: str) -> dict:
@@ -131,19 +184,25 @@ async def analyze_resume(resume_text: str) -> dict:
     Analyze a resume text and return structured feedback.
 
     Args:
-        resume_text: The raw text of the resume pasted by the user.
+        resume_text: The raw text of the resume pasted by the user (untrusted input).
 
     Returns:
         dict with keys: overall_score, grade, summary, section_scores,
                         red_flags, strong_points, rewritten_bullets
     """
+    safe_text = sanitize_untrusted_text(resume_text, MAX_RESUME_CHARS)
+    if looks_like_injection(safe_text):
+        print("[resume_analyzer] possible prompt-injection content detected in resume")
+
+    wrapped_text = wrap_untrusted(safe_text, "RESUME_TEXT")
+
     llm = _get_llm()
     parser = JsonOutputParser(pydantic_object=ResumeAnalysis)
     chain = RESUME_PROMPT | llm | parser
 
     try:
-        result = await chain.ainvoke({"resume_text": resume_text})
-        return result
+        result = await chain.ainvoke({"resume_text": wrapped_text})
+        return _clamp_result(result)
     except Exception as e:
         print(f"[resume_analyzer] LLM error: {e}")
         # Return a safe fallback rather than crashing

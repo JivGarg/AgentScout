@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage';
 import HistoryPage from './pages/HistoryPage';
 import ResultPage from './pages/ResultPage';
 import ResumePage from './pages/ResumePage';
+import NotFoundPage from './pages/NotFoundPage';
 
 function PrivateRoute({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="resume" element={<ResumePage />} />
           <Route path="result/:id" element={<ResultPage />} />
         </Route>
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   );

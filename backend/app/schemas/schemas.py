@@ -1,12 +1,12 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, HttpUrl
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 
 # ── Auth Schemas ──────────────────────────────────────────────
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8, max_length=128)
 
 
 class UserLogin(BaseModel):
@@ -32,6 +32,10 @@ class ResearchRequest(BaseModel):
     url: HttpUrl
 
 
+class CompanyResearchRequest(BaseModel):
+    company_name: str = Field(min_length=2, max_length=120)
+
+
 class ResearchResult(BaseModel):
     company_name: str
     summary: str
@@ -49,6 +53,13 @@ class ResearchResponse(BaseModel):
     timestamp: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CompanyResearchResponse(ResearchResponse):
+    searched_company_name: str
+    resolved_url: str
+    search_source_title: Optional[str] = None
+    search_source_snippet: Optional[str] = None
 
 
 # ── Resume Schemas ────────────────────────────────────────────

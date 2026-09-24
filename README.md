@@ -73,4 +73,4 @@ npm run dev
 - Python 3.11+
 - Node.js 18+
 - PostgreSQL running locally
-- OpenAI API key
+- Gemini API key (get one at https://aistudio.google.com/apikey)

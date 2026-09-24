@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.schemas import ResumeAnalyzeRequest, ResumeAnalyzeResponse
-from app.services.resume_analyzer import analyze_resume
+from app.services.resume_analyzer import LLMNotConfiguredError, analyze_resume
 
 router = APIRouter(prefix="/resume", tags=["Resume"])
 
@@ -37,5 +37,11 @@ async def analyze_resume_endpoint(
             detail="Resume text exceeds the 15,000 character limit. Please shorten it.",
         )
 
-    result = await analyze_resume(request.resume_text)
+    try:
+        result = await analyze_resume(request.resume_text)
+    except LLMNotConfiguredError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service is not configured. Set GEMINI_API_KEY on the server.",
+        )
     return ResumeAnalyzeResponse(**result)

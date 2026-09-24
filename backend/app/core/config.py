@@ -7,13 +7,20 @@ class Settings(BaseSettings):
     APP_NAME: str = "AgentScout"
     DEBUG: bool = True
 
-    # Database
+    # ── Database ─────────────────────────────────────────────
+    # For Supabase: use the connection-pooler URL (port 6543)
+    # Format: postgresql+asyncpg://<user>:<password>@<host>:6543/postgres
     DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/agentscout"
 
-    # LLM (Ollama)
-    OLLAMA_BASE_URL: str = "http://excelerator-ollama-1:11434"
-    OLLAMA_MODEL: str = "llama3"
-    OPENAI_API_KEY: str = ""  # kept for optional OpenAI fallback
+    # Optional: Supabase project keys (only needed if you later
+    # call Supabase REST/Auth directly from the backend)
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+
+    # LLM (Gemini)
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.0-flash"
 
     # JWT Auth
     SECRET_KEY: str = "your-super-secret-key-change-in-production"
@@ -22,6 +29,10 @@ class Settings(BaseSettings):
 
     # Firecrawl
     FIRECRAWL_API_KEY: str = ""
+
+    # Web search provider (for company-name lookup)
+    TAVILY_API_KEY: str = ""
+    TAVILY_BASE_URL: str = "https://api.tavily.com"
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]

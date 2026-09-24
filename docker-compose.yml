@@ -1,10 +1,14 @@
 version: "3.9"
 
 services:
-  # ── PostgreSQL ─────────────────────────────────────────────
+  # ── PostgreSQL (local dev – skip if using Supabase) ───────
+  # To use Supabase instead: comment out the 'db' service,
+  # remove the backend depends_on for db, and set DATABASE_URL
+  # in backend/.env to your Supabase pooler connection string.
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    profiles: ["local-db"]          # only starts with: docker compose --profile local-db up
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -19,21 +23,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Ollama (local LLM) ────────────────────────────────────
-  ollama:
-    image: ollama/ollama
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-
   # ── FastAPI Backend ────────────────────────────────────────
   backend:
     build: ./backend
@@ -44,12 +33,11 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/agentscout
-      OLLAMA_BASE_URL: http://ollama:11434
-    depends_on:
-      db:
-        condition: service_healthy
-      ollama:
-        condition: service_healthy
+    # When using Supabase, the db dependency is no longer needed.
+    # If running with local-db profile, uncomment the db block below.
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
     volumes:
       - ./backend:/app
 
@@ -59,6 +47,8 @@ services:
     restart: unless-stopped
     ports:
       - "5173:5173"
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
     depends_on:
       - backend
     volumes:
@@ -67,4 +57,3 @@ services:
 
 volumes:
   pgdata:
-  ollama_data:
