@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL (local dev – skip if using Supabase) ───────
+  # To use Supabase instead: comment out the 'db' service,
+  # remove the backend depends_on for db, and set DATABASE_URL
+  # in backend/.env to your Supabase pooler connection string.
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["local-db"]          # only starts with: docker compose --profile local-db up
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agentscout
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/agentscout
+    # When using Supabase, the db dependency is no longer needed.
+    # If running with local-db profile, uncomment the db block below.
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  # ── React Frontend ─────────────────────────────────────────
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  pgdata:
